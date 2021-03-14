@@ -47,6 +47,7 @@ func (tx *Tx) init(db *DB) {
 
 	// Copy the meta page since it can be changed by the writer.
 	tx.meta = &meta{}
+	// 拷贝单份 meta
 	db.meta().copy(tx.meta)
 
 	// Copy over the root bucket.

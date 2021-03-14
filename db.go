@@ -94,10 +94,16 @@ type DB struct {
 	// of truncate() and fsync() when growing the data file.
 	AllocSize int
 
+	/**
+	上面是配置，下面是一些内部状态
+	 */
+
 	path     string
 	file     *os.File
 	lockfile *os.File // windows only
+
 	dataref  []byte   // mmap'ed readonly, write throws SEGV
+
 	data     *[maxMapSize]byte
 	datasz   int
 	filesz   int // current on disk file size
@@ -105,6 +111,7 @@ type DB struct {
 	meta1    *meta
 	pageSize int
 	opened   bool
+	// 正在运行的读写事务，同一时间只能有一个
 	rwtx     *Tx
 	txs      []*Tx
 	freelist *freelist
@@ -115,6 +122,7 @@ type DB struct {
 	batchMu sync.Mutex
 	batch   *batch
 
+	// 限制写入事务的数量
 	rwlock   sync.Mutex   // Allows only one writer at a time.
 	metalock sync.Mutex   // Protects meta page access.
 	mmaplock sync.RWMutex // Protects mmap access during remapping.
@@ -154,6 +162,7 @@ func Open(path string, mode os.FileMode, options *Options) (*DB, error) {
 	if options == nil {
 		options = DefaultOptions
 	}
+	// TODO(mwish): 什么是 GrowSync 和 NoGrowSync
 	db.NoGrowSync = options.NoGrowSync
 	db.MmapFlags = options.MmapFlags
 
@@ -171,10 +180,13 @@ func Open(path string, mode os.FileMode, options *Options) (*DB, error) {
 	// Open data file and separate sync handler for metadata writes.
 	db.path = path
 	var err error
+	// 利用 OpenFile 和提供的 flags 打开文件, 不存在就 create
 	if db.file, err = os.OpenFile(db.path, flag|os.O_CREATE, mode); err != nil {
 		_ = db.close()
 		return nil, err
 	}
+
+	// 用 flock 文件锁打开文件
 
 	// Lock file so that other processes using Bolt in read-write mode cannot
 	// use the database  at the same time. This would cause corruption since
@@ -189,6 +201,7 @@ func Open(path string, mode os.FileMode, options *Options) (*DB, error) {
 	}
 
 	// Default values for test hooks
+	// WriteAt 会走到 pwrite 上
 	db.ops.writeAt = db.file.WriteAt
 
 	// Initialize the database if it doesn't exist.
@@ -200,6 +213,8 @@ func Open(path string, mode os.FileMode, options *Options) (*DB, error) {
 			return nil, err
 		}
 	} else {
+		// pageSize 可能是非 `os.PageSize` 的值，被初始化为 `os.GetPageSize`
+
 		// Read the first meta page to determine the page size.
 		var buf [0x1000]byte
 		if _, err := db.file.ReadAt(buf[:], 0); err == nil {
@@ -219,6 +234,7 @@ func Open(path string, mode os.FileMode, options *Options) (*DB, error) {
 		}
 	}
 
+	// 用 sync.Pool 初始化 Page.
 	// Initialize page pool.
 	db.pagePool = sync.Pool{
 		New: func() interface{} {
@@ -234,6 +250,7 @@ func Open(path string, mode os.FileMode, options *Options) (*DB, error) {
 
 	// Read in the freelist.
 	db.freelist = newFreelist()
+	// 拿到 freelist 的 page
 	db.freelist.read(db.page(db.meta().freelist))
 
 	// Mark the database as opened and return.
@@ -345,12 +362,18 @@ func (db *DB) init() error {
 	db.pageSize = os.Getpagesize()
 
 	// Create two meta pages on a buffer.
+	// 这个 pageSize * 4 看起来有点怪, 因为是这样的：
+	// 1. 写入2个 meta page, 对应 0 1
+	// 2. 写入 freelist page, 对应 3
+	// 3. 写入 leaf page, 是一个 empty leaf.
 	buf := make([]byte, db.pageSize*4)
 	for i := 0; i < 2; i++ {
+		// 强制初始化为 PageID, 转化成内存中的 *page
 		p := db.pageInBuffer(buf[:], pgid(i))
 		p.id = pgid(i)
 		p.flags = metaPageFlag
 
+		// TODO(mwish): 这个地方是怎么确定非 meta page 的大小是多少的？
 		// Initialize the meta page.
 		m := p.meta()
 		m.magic = magic
@@ -375,10 +398,12 @@ func (db *DB) init() error {
 	p.flags = leafPageFlag
 	p.count = 0
 
+	// buf 的大小正好是 4 * pageSize
 	// Write the buffer to our data file.
 	if _, err := db.ops.writeAt(buf, 0); err != nil {
 		return err
 	}
+	// 强制刷盘
 	if err := fdatasync(db); err != nil {
 		return err
 	}
@@ -788,17 +813,20 @@ func (db *DB) Info() *Info {
 	return &Info{uintptr(unsafe.Pointer(&db.data[0])), db.pageSize}
 }
 
+// db.data 保存了 mmap 中的读取数据，page in buffer 取出对应的数据
 // page retrieves a page reference from the mmap based on the current page size.
 func (db *DB) page(id pgid) *page {
 	pos := id * pgid(db.pageSize)
 	return (*page)(unsafe.Pointer(&db.data[pos]))
 }
 
+// pageInBuffer 感觉是为了写入的.
 // pageInBuffer retrieves a page reference from a given byte array based on the current page size.
 func (db *DB) pageInBuffer(b []byte, id pgid) *page {
 	return (*page)(unsafe.Pointer(&b[id*pgid(db.pageSize)]))
 }
 
+// 通过 db 的信息给出真正的 meta, 有可靠的看可靠的，都可靠看事务大的，都没有就 panic 吧。
 // meta retrieves the current meta page reference.
 func (db *DB) meta() *meta {
 	// We have to return the meta with the highest txid which doesn't fail
@@ -891,6 +919,7 @@ func (db *DB) IsReadOnly() bool {
 	return db.readOnly
 }
 
+// Options 除了 db 参数还包含一个 timeout
 // Options represents the options that can be set when opening a database.
 type Options struct {
 	// Timeout is the amount of time to wait to obtain a file lock.
@@ -926,6 +955,7 @@ var DefaultOptions = &Options{
 	NoGrowSync: false,
 }
 
+// 全局的一些统计状态
 // Stats represents statistics about the database.
 type Stats struct {
 	// Freelist stats
@@ -967,6 +997,7 @@ type Info struct {
 	PageSize int
 }
 
+// 应该是全局的一些元信息
 type meta struct {
 	magic    uint32
 	version  uint32
