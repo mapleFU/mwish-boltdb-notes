@@ -6,6 +6,8 @@ import (
 	"unsafe"
 )
 
+// 看来是有剩余空间就丢到 freelist 里面，page_id 是可以重用的 id
+// TODO(mwish): 这个应该是一个磁盘化结构。在 `read` 和 `write` 两个地方读写盘。
 // freelist represents a list of all pages that are available for allocation.
 // It also tracks pages that have been freed but are still in use by open transactions.
 type freelist struct {
@@ -69,6 +71,11 @@ func (f *freelist) allocate(n int) pgid {
 		return 0
 	}
 
+	// Go 语言的零值初始化(C++用户看着莫名很不爽)
+	// 下面这个地方的逻辑是，判断连续 page 的数量
+	// `initial` 是连续段的开始，previd 是上一个
+	// [initial, id] 是连续的区段。
+	// 判断连续的区段能不能分配 a 的 size
 	var initial, previd pgid
 	for i, id := range f.ids {
 		if id <= 1 {
@@ -159,6 +166,11 @@ func (f *freelist) freed(pgid pgid) bool {
 	return f.cache[pgid]
 }
 
+
+/**
+ * NOTE: 下面的函数用于 freelist 从 `page` 对象中的读写
+ */
+
 // read initializes the freelist from a freelist page.
 func (f *freelist) read(p *page) {
 	// If the page.count is at the max uint16 value (64k) then it's considered
@@ -204,6 +216,7 @@ func (f *freelist) write(p *page) error {
 		f.copyall(((*[maxAllocSize]pgid)(unsafe.Pointer(&p.ptr)))[:])
 	} else {
 		p.count = 0xFFFF
+		// 放到第一个 pgid 对象
 		((*[maxAllocSize]pgid)(unsafe.Pointer(&p.ptr)))[0] = pgid(lenids)
 		f.copyall(((*[maxAllocSize]pgid)(unsafe.Pointer(&p.ptr)))[1:])
 	}

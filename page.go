@@ -1,3 +1,4 @@
+/// page 层本身似乎没有 txn 的概念。
 package bolt
 
 import (
@@ -25,13 +26,25 @@ const (
 	bucketLeafFlag = 0x01
 )
 
+// 对应的 page id
 type pgid uint64
 
 type page struct {
 	id       pgid
+	// 对应上面的 flag, 有几种类型：
+	// * freelist: 单独的 freelist page
+	// 下面三种都是对应到 Btree 的
+	// * leaf
+	// * meta
+	// * branch
 	flags    uint16
+
+	// count 是一个 u16, 所以有的地方最大只给了 0xFFFF
 	count    uint16
+	// overflow page, 一个 id, 表示 [id, id + overflow] 是这个 page 的逻辑范围
 	overflow uint32
+	// 保存的实际内容
+	// 这个 ptr 实际上是 data 段
 	ptr      uintptr
 }
 
@@ -51,6 +64,7 @@ func (p *page) typ() string {
 
 // meta returns a pointer to the metadata section of the page.
 func (p *page) meta() *meta {
+	// 这个地方是个 go hack, 把指针转化成 meta*, 后者是 Go 里面的类型
 	return (*meta)(unsafe.Pointer(&p.ptr))
 }
 

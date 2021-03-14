@@ -10,6 +10,8 @@ import (
 	"unsafe"
 )
 
+// flock 可以看系统编程手册 55 节
+// flock 对整个文件加锁，源自 BSD
 // flock acquires an advisory lock on a file descriptor.
 func flock(db *DB, mode os.FileMode, exclusive bool, timeout time.Duration) error {
 	var t time.Time
