@@ -107,13 +107,23 @@ type DB struct {
 	data     *[maxMapSize]byte
 	datasz   int
 	filesz   int // current on disk file size
+
+	// meta page
+	// TODO(mwish): 为什么要有两个？
 	meta0    *meta
 	meta1    *meta
+
+	// 这个值应该是不可更改的，大小应该和 mmap 用到的 pageSize 是一样的
+	// 从 os.GetPageSize 拿到。
+	// 如果别的机器上配置的 page size 不一样，然后给另一个机器读，那么可能有不同的 pagesize?
 	pageSize int
 	opened   bool
 	// 正在运行的读写事务，同一时间只能有一个
 	rwtx     *Tx
+	// 正在运行的读事务
 	txs      []*Tx
+
+	// 现有的 freelist
 	freelist *freelist
 	stats    Stats
 
@@ -124,8 +134,14 @@ type DB struct {
 
 	// 限制写入事务的数量
 	rwlock   sync.Mutex   // Allows only one writer at a time.
+	// 限制 metapage 读写的 lock
+	// TODO(mwish): 这个是什么和什么冲突的
 	metalock sync.Mutex   // Protects meta page access.
+	// TODO(mwish): 这个是什么时候需要的?
 	mmaplock sync.RWMutex // Protects mmap access during remapping.
+	// 读/写的事务都会触发 stat 的更新，所以需要 statlock
+	// 同时, `Stats` 接口是个读语义，所以实现了读写锁
+	// （我比较好奇的是调 `Stats` 多不多）
 	statlock sync.RWMutex // Protects stats access.
 
 	ops struct {

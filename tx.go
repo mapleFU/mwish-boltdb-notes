@@ -597,6 +597,14 @@ func (tx *Tx) forEachPage(pgid pgid, depth int, fn func(*page, int)) {
 	}
 }
 
+// PageInfo represents human readable information about a page.
+type PageInfo struct {
+	ID            int
+	Type          string
+	Count         int
+	OverflowCount int
+}
+
 // Page returns page information for a given page number.
 // This is only safe for concurrent use when used by a writable transaction.
 func (tx *Tx) Page(id int) (*PageInfo, error) {
@@ -615,6 +623,7 @@ func (tx *Tx) Page(id int) (*PageInfo, error) {
 	}
 
 	// Determine the type (or if it's free).
+	// 在 freelist 就是 free, 否则按 page 上的 type 定义
 	if tx.db.freelist.freed(pgid(id)) {
 		info.Type = "free"
 	} else {

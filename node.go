@@ -10,16 +10,19 @@ import (
 // node represents an in-memory, deserialized page.
 type node struct {
 	bucket     *Bucket
+
 	isLeaf     bool
 	unbalanced bool
 	spilled    bool
 	key        []byte
 	pgid       pgid
+
 	parent     *node
 	children   nodes
 	inodes     inodes
 }
 
+// 这都递归，你妈飞了？
 // root returns the top-level node this node is attached to.
 func (n *node) root() *node {
 	if n.parent == nil {
