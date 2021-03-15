@@ -18,6 +18,7 @@ type node struct {
 	spilled    bool
 
 	// node 起始的 key
+	// NOTE: key 的内容引自 mmap, 是不可修改的
 	key        []byte
 	pgid       pgid
 
@@ -26,6 +27,7 @@ type node struct {
 	children   nodes
 	// 存储 Page 中的 value
 	// inode 类型类似 tagged enum, 是一个 flag + [ leaf 的值 | branch 的值 ]
+	// NOTE: inode 的内容引自 mmap, 是不可修改的
 	inodes     inodes
 }
 
@@ -445,6 +447,9 @@ func (n *node) spill() error {
 
 // rebalance attempts to combine the node with sibling nodes if the node fill
 // size is below a threshold or if there are not enough keys.
+//
+// 上面的 ** below a threshold or if there are not enough keys ** 就是 rebalance 的条件
+// 过大的话就直接忽略了。
 func (n *node) rebalance() {
 	if !n.unbalanced {
 		return
@@ -463,6 +468,7 @@ func (n *node) rebalance() {
 	// Root node has special handling.
 	if n.parent == nil {
 		// If root node is a branch and only has one node then collapse it.
+		// 尝试把它扁平化
 		if !n.isLeaf && len(n.inodes) == 1 {
 			// Move root's child up.
 			child := n.bucket.node(n.inodes[0].pgid, n)
@@ -478,6 +484,7 @@ func (n *node) rebalance() {
 			}
 
 			// Remove old child.
+			// n.bucket.nodes 也就是个内存结构，没关系的
 			child.parent = nil
 			delete(n.bucket.nodes, child.pgid)
 			child.free()
@@ -485,6 +492,8 @@ func (n *node) rebalance() {
 
 		return
 	}
+
+	// 是叶子节点的情况
 
 	// If node has no keys then just remove it.
 	if n.numChildren() == 0 {
@@ -500,7 +509,7 @@ func (n *node) rebalance() {
 
 	// Destination node is right sibling if idx == 0, otherwise left sibling.
 	var target *node
-	var useNextSibling = (n.parent.childIndex(n) == 0)
+	var useNextSibling = n.parent.childIndex(n) == 0
 	if useNextSibling {
 		target = n.nextSibling()
 	} else {
@@ -512,6 +521,7 @@ func (n *node) rebalance() {
 		// Reparent all child nodes being moved.
 		for _, inode := range target.inodes {
 			if child, ok := n.bucket.nodes[inode.pgid]; ok {
+				// 更换内存中 node 的 parent 和 children
 				child.parent.removeChild(child)
 				child.parent = n
 				child.parent.children = append(child.parent.children, child)
@@ -559,6 +569,8 @@ func (n *node) removeChild(target *node) {
 
 // dereference causes the node to copy all its inode key/value references to heap memory.
 // This is required when the mmap is reallocated so inodes are not pointing to stale data.
+//
+// 在 mmap 重置的时候调用, key 和 inode 的值实际上是绑定在 mmap 上的。这个地方真的几把 hack...
 func (n *node) dereference() {
 	if n.key != nil {
 		key := make([]byte, len(n.key))
@@ -590,6 +602,7 @@ func (n *node) dereference() {
 }
 
 // free adds the node's underlying page to the freelist.
+// free 的操作就是放到某个 txn 的 freelist 中
 func (n *node) free() {
 	if n.pgid != 0 {
 		n.bucket.tx.db.freelist.free(n.bucket.tx.meta.txid, n.bucket.tx.page(n.pgid))

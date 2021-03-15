@@ -320,6 +320,7 @@ func (b *Bucket) Put(key []byte, value []byte) error {
 
 	// Insert into node.
 	key = cloneBytes(key)
+	// 这个地方写入会被注册到 buckets.nodes 里
 	c.node().put(key, key, value, 0, 0)
 
 	return nil
@@ -654,7 +655,7 @@ func (b *Bucket) rebalance() {
 	}
 }
 
-// 根据 page_id 和 parent node 来创建内存 node.
+// 根据 page_id 和 parent node 来创建内存 node. 然后注册到 Bucket.nodes 里
 // CHECK: 似乎只有写接口会调用这个
 // node creates a node from a page and associates it with a given parent.
 func (b *Bucket) node(pgid pgid, parent *node) *node {

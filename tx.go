@@ -470,6 +470,8 @@ func (tx *Tx) checkBucket(b *Bucket, reachable map[pgid]*page, freed map[pgid]bo
 	})
 }
 
+// allocate 返回连续的 n 个，本事务写下去的可能被别的事务读，感觉不太能复用
+// 所以从 db.allocate 拿。
 // allocate returns a contiguous block of memory starting at a given page.
 func (tx *Tx) allocate(count int) (*page, error) {
 	p, err := tx.db.allocate(count)
