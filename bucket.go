@@ -38,11 +38,15 @@ type Bucket struct {
 	*bucket
 
 	tx       *Tx                // the associated transaction
+	// Note: 只有写事务才有 buckets cache
 	buckets  map[string]*Bucket // subbucket cache
+
 	// inline page
 	page     *page              // inline page reference
-	// rootPage
+	// root page 在内存中的缓存. 这个的 root 是 tree 的 root.
 	rootNode *node              // materialized node for the root page.
+
+	// Note: 只有写事务才有 nodes cache
 	nodes    map[pgid]*node     // node cache
 
 	// Sets the threshold for filling nodes when they split. By default,
@@ -56,7 +60,9 @@ type Bucket struct {
 // bucket represents the on-file representation of a bucket.
 // This is stored as the "value" of a bucket key. If the bucket is small enough,
 // then its root page can be stored inline in the "value", after the bucket
-// header. In the case of inline buckets, the "root" will be 0.
+// header.
+//
+// In the case of inline buckets, the "root" will be 0.
 type bucket struct {
 	root     pgid   // page id of the bucket's root-level page
 	sequence uint64 // monotonically incrementing, used by NextSequence()
@@ -648,6 +654,8 @@ func (b *Bucket) rebalance() {
 	}
 }
 
+// 根据 page_id 和 parent node 来创建内存 node.
+// CHECK: 似乎只有写接口会调用这个
 // node creates a node from a page and associates it with a given parent.
 func (b *Bucket) node(pgid pgid, parent *node) *node {
 	_assert(b.nodes != nil, "nodes map expected")
@@ -711,6 +719,11 @@ func (b *Bucket) dereference() {
 
 // pageNode returns the in-memory node, if it exists.
 // Otherwise returns the underlying page.
+//
+// (感觉返回 *page 的话是不能写的?)
+// 1. 如果是 inline 就返回 rootnode.
+// 2. 否则从 Bucket.nodes 中查找
+// 3. 否则调用 Tx.page, 它会先从缓存找，再从 db 找。找 db 的时候，因为 page 是物理上顺序的，所以很快。这里从 mmap 上加载。
 func (b *Bucket) pageNode(id pgid) (*page, *node) {
 	// Inline buckets have a fake page embedded in their value so treat them
 	// differently. We'll return the rootNode (if available) or the fake page.

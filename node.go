@@ -24,7 +24,8 @@ type node struct {
 	parent     *node
 	// 子节点
 	children   nodes
-	// TODO(mwish): 这几把是啥
+	// 存储 Page 中的 value
+	// inode 类型类似 tagged enum, 是一个 flag + [ leaf 的值 | branch 的值 ]
 	inodes     inodes
 }
 

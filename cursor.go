@@ -16,7 +16,9 @@ import (
 // and return unexpected keys and/or values. You must reposition your cursor
 // after mutating data.
 type Cursor struct {
+	// 这个 bucket 应该是触发 .node 和 .pageNode 用的
 	bucket *Bucket
+	// 这个 stack 应该是一个从上到下的 stack
 	stack  []elemRef
 }
 
@@ -35,6 +37,7 @@ func (c *Cursor) First() (key []byte, value []byte) {
 	c.stack = append(c.stack, elemRef{page: p, node: n, index: 0})
 	c.first()
 
+	// TODO(mwish): 什么时候会这样呢, 感觉像最左侧 Page 啥都没有的时候。
 	// If we land on an empty page then move to the next value.
 	// https://github.com/boltdb/bolt/issues/450
 	if c.stack[len(c.stack)-1].count() == 0 {
@@ -169,6 +172,7 @@ func (c *Cursor) seek(seek []byte) (key []byte, value []byte, flags uint32) {
 }
 
 // first moves the cursor to the first leaf element under the last page in the stack.
+// CHECK: stack's size should be at least 1.
 func (c *Cursor) first() {
 	for {
 		// Exit when we hit a leaf page.
@@ -378,8 +382,10 @@ func (c *Cursor) node() *node {
 
 // elemRef represents a reference to an element on a given page/node.
 type elemRef struct {
+	// 下面这两个字段也是个 enum...感觉是靠 nullptr 判断的
 	page  *page
 	node  *node
+	// index 是给定的坐标，page/node
 	index int
 }
 

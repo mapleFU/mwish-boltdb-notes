@@ -22,12 +22,22 @@ type txid uint64
 // are using them. A long running read transaction can cause the database to
 // quickly grow.
 type Tx struct {
+	// 可读性 flag
 	writable       bool
+	// managed 的时候，内部函数不能自己 commit
 	managed        bool
+	// 对整个 *DB 对象的 reference
 	db             *DB
+	// 事务会拷贝一份 root meta 使用
+	// TODO(mwish): 为什么读的时候 meta 也要拷贝
 	meta           *meta
+	// root 对象是 root bucket 对象
+	// TODO(mwish): meta.root 和它有什么区别
 	root           Bucket
+	// Tx 对象已经加载过的 page
 	pages          map[pgid]*page
+
+	// stats, 因为事务只有单个线程更新，所以不需要 Guard
 	stats          TxStats
 	commitHandlers []func()
 
@@ -40,6 +50,7 @@ type Tx struct {
 	WriteFlag int
 }
 
+// CHECK: db should hold the metadata lock and mmap lock.
 // init initializes the transaction.
 func (tx *Tx) init(db *DB) {
 	tx.db = db
@@ -50,6 +61,7 @@ func (tx *Tx) init(db *DB) {
 	// 拷贝单份 meta
 	db.meta().copy(tx.meta)
 
+	// 拷贝 root bucket.
 	// Copy over the root bucket.
 	tx.root = newBucket(tx)
 	tx.root.bucket = &bucket{}
@@ -57,7 +69,9 @@ func (tx *Tx) init(db *DB) {
 
 	// Increment the transaction id and add a page cache for writable transactions.
 	if tx.writable {
+		// 把写过的 page 记录一个 Map
 		tx.pages = make(map[pgid]*page)
+		// 悲观事务递增 txid
 		tx.meta.txid += txid(1)
 	}
 }
@@ -167,6 +181,7 @@ func (tx *Tx) Commit() error {
 	}
 	tx.stats.SpillTime += time.Since(startTime)
 
+	// .root 是个 bucket, 把新的 rebalance 和 spill 之后的 bucket 设置给 meta
 	// Free the old root bucket.
 	tx.meta.root.root = tx.root.root
 
@@ -204,6 +219,7 @@ func (tx *Tx) Commit() error {
 	// If strict mode is enabled then perform a consistency check.
 	// Only the first consistency error is reported in the panic.
 	if tx.db.StrictMode {
+		// TODO(mwish): 这个地方有什么 async check 的目的吗，是不是里面会并行找？
 		ch := tx.Check()
 		var errs []string
 		for {
@@ -569,6 +585,10 @@ func (tx *Tx) writeMeta() error {
 
 // page returns a reference to the page with a given id.
 // If page has been written to then a temporary buffered page is returned.
+//
+// tx.page 操作是个很奇怪的(也不奇怪)的操作，这个操作应该是一个只读的操作。
+// 1. 先尝试从缓存查找
+// 2. mmap 来读取旧的 page.
 func (tx *Tx) page(id pgid) *page {
 	// Check the dirty pages first.
 	if tx.pages != nil {
@@ -581,6 +601,7 @@ func (tx *Tx) page(id pgid) *page {
 	return tx.db.page(id)
 }
 
+// 递归调用，不会涉及 bucket 的逻辑
 // forEachPage iterates over every page within a given page and executes a function.
 func (tx *Tx) forEachPage(pgid pgid, depth int, fn func(*page, int)) {
 	p := tx.page(pgid)

@@ -396,6 +396,7 @@ func (db *DB) init() error {
 		m.version = version
 		m.pageSize = uint32(db.pageSize)
 		m.freelist = 2
+		// 创建一个 root bucket, root: 3 表示数据页从 3 开始
 		m.root = bucket{root: 3}
 		m.pgid = 4
 		m.txid = txid(i)
@@ -408,6 +409,7 @@ func (db *DB) init() error {
 	p.flags = freelistPageFlag
 	p.count = 0
 
+	// 数据页被初始化为一个 leaf page
 	// Write an empty leaf page at page 4.
 	p = db.pageInBuffer(buf[:], pgid(3))
 	p.id = pgid(3)
@@ -650,6 +652,8 @@ func (db *DB) Update(fn func(*Tx) error) error {
 // Any error that is returned from the function is returned from the View() method.
 //
 // Attempting to manually rollback within the function will cause a panic.
+//
+// 1. 读流程
 func (db *DB) View(fn func(*Tx) error) error {
 	t, err := db.Begin(false)
 	if err != nil {
