@@ -9,16 +9,22 @@ import (
 
 // node represents an in-memory, deserialized page.
 type node struct {
+	// 自身存在的 bucket, 对于 branch 和 leaf 来说，共享同一个 bucket
 	bucket     *Bucket
-
+	// 是否是 leaf page
 	isLeaf     bool
+	// TODO(mwish): 下面应该和 btree 的状态有关。
 	unbalanced bool
 	spilled    bool
+
+	// node 起始的 key
 	key        []byte
 	pgid       pgid
 
 	parent     *node
+	// 子节点
 	children   nodes
+	// TODO(mwish): 这几把是啥
 	inodes     inodes
 }
 
@@ -49,6 +55,7 @@ func (n *node) size() int {
 	return sz
 }
 
+// 设置这样一个接口是因为可以在中间熔断...?
 // sizeLessThan returns true if the node is less than a given size.
 // This is an optimization to avoid calculating a large node when we only need
 // to know if it fits inside a certain page size.
@@ -91,6 +98,7 @@ func (n *node) numChildren() int {
 	return len(n.inodes)
 }
 
+// 从自己的 parent 寻找 next sibling
 // nextSibling returns the next node with the same parent.
 func (n *node) nextSibling() *node {
 	if n.parent == nil {
@@ -115,6 +123,15 @@ func (n *node) prevSibling() *node {
 	return n.parent.childAt(index - 1)
 }
 
+/*
+ * 具体读写单个 node 的接口
+ */
+
+// 1. 二分找到位置
+// 2. 插入:
+//   2.1. 如果正好有这个 key 的话，覆盖写
+//   2.2. 否则，把其他的内容移到后面，然后正常写入
+//，complexity 为 O(N)
 // put inserts a key/value.
 func (n *node) put(oldKey, newKey, value []byte, pgid pgid, flags uint32) {
 	if pgid >= n.bucket.tx.meta.pgid {
@@ -128,8 +145,9 @@ func (n *node) put(oldKey, newKey, value []byte, pgid pgid, flags uint32) {
 	// Find insertion index.
 	index := sort.Search(len(n.inodes), func(i int) bool { return bytes.Compare(n.inodes[i].key, oldKey) != -1 })
 
+	// 非 exact 采用覆盖写
 	// Add capacity and shift nodes if we don't have an exact match and need to insert.
-	exact := (len(n.inodes) > 0 && index < len(n.inodes) && bytes.Equal(n.inodes[index].key, oldKey))
+	exact := len(n.inodes) > 0 && index < len(n.inodes) && bytes.Equal(n.inodes[index].key, oldKey)
 	if !exact {
 		n.inodes = append(n.inodes, inode{})
 		copy(n.inodes[index+1:], n.inodes[index:])
@@ -153,6 +171,7 @@ func (n *node) del(key []byte) {
 		return
 	}
 
+	// TODO(mwish): 这个地方会缩容吗？
 	// Delete inode from the node.
 	n.inodes = append(n.inodes[:index], n.inodes[index+1:]...)
 
@@ -163,7 +182,7 @@ func (n *node) del(key []byte) {
 // read initializes the node from a page.
 func (n *node) read(p *page) {
 	n.pgid = p.id
-	n.isLeaf = ((p.flags & leafPageFlag) != 0)
+	n.isLeaf = (p.flags & leafPageFlag) != 0
 	n.inodes = make(inodes, int(p.count))
 
 	for i := 0; i < int(p.count); i++ {
@@ -248,6 +267,7 @@ func (n *node) write(p *page) {
 	// DEBUG ONLY: n.dump()
 }
 
+// split 分开单个 node, 分裂成父子关系
 // split breaks up a node into multiple smaller nodes, if appropriate.
 // This should only be called from the spill() function.
 func (n *node) split(pageSize int) []*node {
@@ -273,6 +293,10 @@ func (n *node) split(pageSize int) []*node {
 
 // splitTwo breaks up a node into two smaller nodes, if appropriate.
 // This should only be called from the split() function.
+// 返回的第二个参数为 nil 的时候，代表 split 终止。
+// NOTE: 注意，第一次调用的时候，会把 parent 包含在返回的 node 中，而不是将 parent 返回。
+// 它的算法也特别简单，就是很粗暴的拿到一个 fillPercent, 然后每次把这个移到第一个，剩下的大部分丢给第二个
+// 我感觉这个算法不是很好，为什么不一次直接构造了呢？
 func (n *node) splitTwo(pageSize int) (*node, *node) {
 	// Ignore the split if the page doesn't have at least enough nodes for
 	// two pages or if the nodes can fit in a single page.
@@ -280,6 +304,7 @@ func (n *node) splitTwo(pageSize int) (*node, *node) {
 		return n, nil
 	}
 
+	// TODO(mwish): 这段内容我已经看懂了，但是为什么会有个 fillPercent? 不是填满更好吗?
 	// Determine the threshold before starting a new node.
 	var fillPercent = n.bucket.FillPercent
 	if fillPercent < minFillPercent {
@@ -290,11 +315,13 @@ func (n *node) splitTwo(pageSize int) (*node, *node) {
 	threshold := int(float64(pageSize) * fillPercent)
 
 	// Determine split position and sizes of the two pages.
+	// 拿到 split 的 index
 	splitIndex, _ := n.splitIndex(threshold)
 
 	// Split node into two separate nodes.
 	// If there's no parent then we'll need to create one.
 	if n.parent == nil {
+		// 第一次创建 parent.
 		n.parent = &node{bucket: n.bucket, children: []*node{n}}
 	}
 
@@ -315,13 +342,17 @@ func (n *node) splitTwo(pageSize int) (*node, *node) {
 // splitIndex finds the position where a page will fill a given threshold.
 // It returns the index as well as the size of the first page.
 // This is only be called from split().
+//
+// splitTwo 的辅助函数。给出一个 threshold, 需要野庙超过 `minKeysPerPage`，同时必须小于 `threshold`.
 func (n *node) splitIndex(threshold int) (index, sz int) {
 	sz = pageHeaderSize
 
 	// Loop until we only have the minimum number of keys required for the second page.
 	for i := 0; i < len(n.inodes)-minKeysPerPage; i++ {
 		index = i
-		inode := n.inodes[i]
+		// 我日，这里为什么复制了? 感觉是空间开销的问题
+		// 我改成 & 算了
+		inode := &n.inodes[i]
 		elsize := n.pageElementSize() + len(inode.key) + len(inode.value)
 
 		// If we have at least the minimum number of keys and adding another
@@ -336,6 +367,10 @@ func (n *node) splitIndex(threshold int) (index, sz int) {
 
 	return
 }
+
+/**
+ * TODO(mwish): 下面是 spill, dereference, rebalance 的逻辑，我都没读过
+ */
 
 // spill writes the nodes to dirty pages and splits nodes as it goes.
 // Returns an error if dirty pages cannot be allocated.
@@ -597,6 +632,8 @@ func (s nodes) Less(i, j int) bool { return bytes.Compare(s[i].inodes[0].key, s[
 // inode represents an internal node inside of a node.
 // It can be used to point to elements in a page or point
 // to an element which hasn't been added to a page yet.
+//
+// inode 可以看看 `node.read` 函数的处理。因为 Golang 里面没有 tagged enum, 所以要用这么别扭的方式。
 type inode struct {
 	flags uint32
 	pgid  pgid

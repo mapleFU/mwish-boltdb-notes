@@ -34,10 +34,14 @@ const DefaultFillPercent = 0.5
 
 // Bucket represents a collection of key/value pairs inside the database.
 type Bucket struct {
+	// bucket: <seq, page_id>
 	*bucket
+
 	tx       *Tx                // the associated transaction
 	buckets  map[string]*Bucket // subbucket cache
+	// inline page
 	page     *page              // inline page reference
+	// rootPage
 	rootNode *node              // materialized node for the root page.
 	nodes    map[pgid]*node     // node cache
 
@@ -101,12 +105,14 @@ func (b *Bucket) Cursor() *Cursor {
 // Returns nil if the bucket does not exist.
 // The bucket instance is only valid for the lifetime of the transaction.
 func (b *Bucket) Bucket(name []byte) *Bucket {
+	// 从 cache 里面找
 	if b.buckets != nil {
 		if child := b.buckets[string(name)]; child != nil {
 			return child
 		}
 	}
 
+	// 用 Cursor 找到对应的值
 	// Move cursor to key.
 	c := b.Cursor()
 	k, v, flags := c.seek(name)
@@ -130,6 +136,7 @@ func (b *Bucket) Bucket(name []byte) *Bucket {
 func (b *Bucket) openBucket(value []byte) *Bucket {
 	var child = newBucket(b.tx)
 
+	// TODO(mwish): 这个地方是什么意思，我看懂了 unaligned 要 copy, 不过没看懂这个
 	// If unaligned load/stores are broken on this arch and value is
 	// unaligned simply clone to an aligned byte array.
 	unaligned := brokenUnaligned && uintptr(unsafe.Pointer(&value[0]))&3 != 0
@@ -147,6 +154,7 @@ func (b *Bucket) openBucket(value []byte) *Bucket {
 		child.bucket = (*bucket)(unsafe.Pointer(&value[0]))
 	}
 
+	// inline 的话，后面全是 page 的内容
 	// Save a reference to the inline page if the bucket is inline.
 	if child.root == 0 {
 		child.page = (*page)(unsafe.Pointer(&value[bucketHeaderSize]))
@@ -522,6 +530,7 @@ func (b *Bucket) _forEachPageNode(pgid pgid, depth int, fn func(*page, *node, in
 	}
 }
 
+// 将大小超过 page size * FillPercent 的 node 分解为多个 node
 // spill writes all the nodes for this bucket to dirty pages.
 func (b *Bucket) spill() error {
 	// Spill all child buckets first.
