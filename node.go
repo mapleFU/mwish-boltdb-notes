@@ -13,7 +13,9 @@ type node struct {
 	bucket     *Bucket
 	// 是否是 leaf page
 	isLeaf     bool
-	// TODO(mwish): 下面应该和 btree 的状态有关。
+	// 下面应该和 btree 的状态有关。
+	// unbalanced 和 rebalance 有关，暗示某个 leaf 可能过小，需要 balance
+	// spill 和某个过大有关，暗示需要 spill
 	unbalanced bool
 	spilled    bool
 
@@ -371,12 +373,11 @@ func (n *node) splitIndex(threshold int) (index, sz int) {
 	return
 }
 
-/**
- * TODO(mwish): 下面是 spill, dereference, rebalance 的逻辑，我都没读过
- */
 
 // spill writes the nodes to dirty pages and splits nodes as it goes.
 // Returns an error if dirty pages cannot be allocated.
+//
+//
 func (n *node) spill() error {
 	var tx = n.bucket.tx
 	if n.spilled {
@@ -397,6 +398,8 @@ func (n *node) spill() error {
 	n.children = nil
 
 	// Split nodes into appropriate sizes. The first node will always be n.
+	//
+	// 先调用 split 分解成 nodes, parent 在所有的 node.parent
 	var nodes = n.split(tx.db.pageSize)
 	for _, node := range nodes {
 		// Add node's page to the freelist if it's not new.
@@ -406,6 +409,9 @@ func (n *node) spill() error {
 		}
 
 		// Allocate contiguous space for the node.
+		//
+		// 申请，这个地方可能会 remap
+		// 这个地方为啥不是 (node.size() + 1) / txn.db.pageSize ? 垃圾
 		p, err := tx.allocate((node.size() / tx.db.pageSize) + 1)
 		if err != nil {
 			return err

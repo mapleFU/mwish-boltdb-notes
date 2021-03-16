@@ -872,6 +872,8 @@ func (db *DB) meta() *meta {
 }
 
 // allocate returns a contiguous block of memory starting at a given page.
+//
+// 申请连续的内存，如果 count == 1 从 page-pool 分配，否则从 heap 上分配
 func (db *DB) allocate(count int) (*page, error) {
 	// Allocate a temporary buffer for the page.
 	var buf []byte
@@ -883,6 +885,9 @@ func (db *DB) allocate(count int) (*page, error) {
 	p := (*page)(unsafe.Pointer(&buf[0]))
 	p.overflow = uint32(count - 1)
 
+	// freelist 存的并不是内存 page(node), 存的是可用的 node id
+	// 不过这个用的是 first fit 算法，也挺垃圾的
+	//
 	// Use pages from the freelist if they are available.
 	if p.id = db.freelist.allocate(count); p.id != 0 {
 		return p, nil
@@ -1025,6 +1030,7 @@ type meta struct {
 	flags    uint32
 	root     bucket
 	freelist pgid
+	// high watermark
 	pgid     pgid
 	txid     txid
 	checksum uint64

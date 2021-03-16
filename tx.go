@@ -209,6 +209,8 @@ func (tx *Tx) Commit() error {
 		}
 	}
 
+	// 把所有内容全部写盘，包括 dirtylist 和内容
+	//
 	// Write dirty pages to disk.
 	startTime = time.Now()
 	if err := tx.write(); err != nil {
@@ -235,6 +237,8 @@ func (tx *Tx) Commit() error {
 	}
 
 	// Write meta to disk.
+	//
+	// 变更 meta
 	if err := tx.writeMeta(); err != nil {
 		tx.rollback()
 		return err
