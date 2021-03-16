@@ -216,6 +216,9 @@ func (n *node) read(p *page) {
 }
 
 // write writes the items onto one or more pages.
+//
+// 注意 node.write(p) 的时候，实际上隐含了 inline page 的逻辑，写入的 page 可能不止一个。
+// db.
 func (n *node) write(p *page) {
 	// Initialize page.
 	if n.isLeaf {
@@ -356,13 +359,18 @@ func (n *node) splitIndex(threshold int) (index, sz int) {
 	// Loop until we only have the minimum number of keys required for the second page.
 	for i := 0; i < len(n.inodes)-minKeysPerPage; i++ {
 		index = i
+		// <del>
 		// 我日，这里为什么复制了? 感觉是空间开销的问题
 		// 我改成 & 算了
+		// </del>
+		// 这里的 inode.key inode.value 不会复制，而且很可能是 mmap 映射的。
 		inode := &n.inodes[i]
 		elsize := n.pageElementSize() + len(inode.key) + len(inode.value)
 
 		// If we have at least the minimum number of keys and adding another
 		// node would put us over the threshold then exit and return.
+		//
+		// 条件要 i 大于最低阈值(2)，且大于 threshold (PageSize * fillPercent).
 		if i >= minKeysPerPage && sz+elsize > threshold {
 			break
 		}
@@ -411,6 +419,8 @@ func (n *node) spill() error {
 		// Allocate contiguous space for the node.
 		//
 		// 申请，这个地方可能会 remap
+		// 注意 node.size() / txn.db.pageSize, 实际上这里暗含了 overflow 的逻辑
+		// tx.allocate 和 db.allocate 都处理了 overflow 的逻辑，这个 p 本身就带 overflow 的
 		// 这个地方为啥不是 (node.size() + 1) / txn.db.pageSize ? 垃圾
 		p, err := tx.allocate((node.size() / tx.db.pageSize) + 1)
 		if err != nil {

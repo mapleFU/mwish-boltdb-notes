@@ -10,6 +10,7 @@ import (
 
 const pageHeaderSize = int(unsafe.Offsetof(((*page)(nil)).ptr))
 
+// 这个地方是个之前没发现的很重要的线索，minKeysPerPage 实际上是 2，这意味着单个 page 至少有两个 key
 const minKeysPerPage = 2
 
 const branchPageElementSize = int(unsafe.Sizeof(branchPageElement{}))
