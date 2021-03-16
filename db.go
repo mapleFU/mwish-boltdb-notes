@@ -233,6 +233,7 @@ func Open(path string, mode os.FileMode, options *Options) (*DB, error) {
 
 		// Read the first meta page to determine the page size.
 		var buf [0x1000]byte
+		// 这个地方只是想读 pagesize.
 		if _, err := db.file.ReadAt(buf[:], 0); err == nil {
 			m := db.pageInBuffer(buf[:], 0).meta()
 			if err := m.validate(); err != nil {
@@ -1062,6 +1063,8 @@ func (m *meta) write(p *page) {
 	}
 
 	// Page id is either going to be 0 or 1 which we can determine by the transaction ID.
+	//
+	// 这个地方很有意思，根据 txid 交替写
 	p.id = pgid(m.txid % 2)
 	p.flags |= metaPageFlag
 

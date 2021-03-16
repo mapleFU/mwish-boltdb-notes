@@ -37,6 +37,10 @@ type Bucket struct {
 	// bucket: <seq, page_id>
 	*bucket
 
+	/**
+	 * 下面是对应的内存结构
+	 */
+
 	tx       *Tx                // the associated transaction
 	// Note: 只有写事务才有 buckets cache
 	buckets  map[string]*Bucket // subbucket cache

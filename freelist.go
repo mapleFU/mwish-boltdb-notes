@@ -67,7 +67,7 @@ func (f *freelist) copyall(dst []pgid) {
 // allocate returns the starting page id of a contiguous list of pages of a given size.
 // If a contiguous block cannot be found then 0 is returned.
 //
-// freelist 写的很垃圾，采用了 first fit 算法，感觉可以改掉
+// freelist 写的很垃圾，采用了 first fit 算法，感觉可以改掉. 返回 0 的时候，认为操作没有拿到对象。
 func (f *freelist) allocate(n int) pgid {
 	if len(f.ids) == 0 {
 		return 0
@@ -117,6 +117,8 @@ func (f *freelist) allocate(n int) pgid {
 
 // free releases a page and its overflow for a given transaction id.
 // If the page is already free then a panic will occur.
+//
+//
 func (f *freelist) free(txid txid, p *page) {
 	if p.id <= 1 {
 		panic(fmt.Sprintf("cannot free page 0 or 1: %d", p.id))
@@ -138,6 +140,8 @@ func (f *freelist) free(txid txid, p *page) {
 }
 
 // release moves all page ids for a transaction id (or older) to the freelist.
+//
+//
 func (f *freelist) release(txid txid) {
 	m := make(pgids, 0)
 	for tid, ids := range f.pending {
@@ -153,6 +157,8 @@ func (f *freelist) release(txid txid) {
 }
 
 // rollback removes the pages from a given pending tx.
+//
+// rollback 需要把 pending 删掉，然后把 f.cache 中的内容删掉
 func (f *freelist) rollback(txid txid) {
 	// Remove page ids from cache.
 	for _, id := range f.pending[txid] {
@@ -174,12 +180,15 @@ func (f *freelist) freed(pgid pgid) bool {
  */
 
 // read initializes the freelist from a freelist page.
+//
+// read 全部读进 f.ids.
 func (f *freelist) read(p *page) {
 	// If the page.count is at the max uint16 value (64k) then it's considered
 	// an overflow and the size of the freelist is stored as the first element.
 	idx, count := 0, int(p.count)
 	if count == 0xFFFF {
 		idx = 1
+		// 感觉实际上就是 page overflow 了
 		count = int(((*[maxAllocSize]pgid)(unsafe.Pointer(&p.ptr)))[0])
 	}
 
@@ -195,6 +204,7 @@ func (f *freelist) read(p *page) {
 		sort.Sort(pgids(f.ids))
 	}
 
+	// 实际上就是处理 freelist 的 cache
 	// Rebuild the page cache.
 	f.reindex()
 }
