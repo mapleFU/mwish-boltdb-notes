@@ -23,19 +23,18 @@ type txid uint64
 // quickly grow.
 type Tx struct {
 	// 可读性 flag
-	writable       bool
+	writable bool
 	// managed 的时候，内部函数不能自己 commit
-	managed        bool
+	managed bool
 	// 对整个 *DB 对象的 reference
-	db             *DB
+	db *DB
 	// 事务会拷贝一份 root meta 使用
 	// TODO(mwish): 为什么读的时候 meta 也要拷贝
-	meta           *meta
-	// root 对象是 root bucket 对象
-	// TODO(mwish): meta.root 和它有什么区别
-	root           Bucket
+	meta *meta
+	// root 对象是 root bucket 对象，每次都会新创建一个独立的 bucket, 然后从 meta.root 拿到 header 信息
+	root Bucket
 	// Tx 对象已经加载过的 page
-	pages          map[pgid]*page
+	pages map[pgid]*page
 
 	// stats, 因为事务只有单个线程更新，所以不需要 Guard
 	stats          TxStats

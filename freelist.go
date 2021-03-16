@@ -7,7 +7,13 @@ import (
 )
 
 // 看来是有剩余空间就丢到 freelist 里面，page_id 是可以重用的 id
-// TODO(mwish): 这个应该是一个磁盘化结构。在 `read` 和 `write` 两个地方读写盘。
+// 这个应该是一个磁盘化结构。在 `read` 和 `write` 两个地方读写盘。
+// 但是 ids 会持久化, 本来以为 pending 是个内存结构，但是实际上 pending 也是会持久化的，它处理的是两种内容：
+// 1. 正在写入事务写过的 page
+// 2. 写完了，正在被读引用的 page
+// 把 1 写下去实际上是危险的，我看了下代码，只有 Commit 的时候，确保成功，才会调用 write, 这个时候 1 在逻辑是被转成 2 了。
+// cache...你见过 cache 非内存的不。
+//
 // freelist represents a list of all pages that are available for allocation.
 // It also tracks pages that have been freed but are still in use by open transactions.
 type freelist struct {
@@ -141,7 +147,7 @@ func (f *freelist) free(txid txid, p *page) {
 
 // release moves all page ids for a transaction id (or older) to the freelist.
 //
-//
+// 在 db 的 beginRWTx 里面调用 txid 会是安全的读事务，用这个来实现 gc
 func (f *freelist) release(txid txid) {
 	m := make(pgids, 0)
 	for tid, ids := range f.pending {
@@ -173,7 +179,6 @@ func (f *freelist) rollback(txid txid) {
 func (f *freelist) freed(pgid pgid) bool {
 	return f.cache[pgid]
 }
-
 
 /**
  * NOTE: 下面的函数用于 freelist 从 `page` 对象中的读写

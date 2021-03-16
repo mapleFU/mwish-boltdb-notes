@@ -30,22 +30,21 @@ const (
 type pgid uint64
 
 type page struct {
-	id       pgid
+	id pgid
 	// 对应上面的 flag, 有几种类型：
 	// * freelist: 单独的 freelist page
 	// 下面三种都是对应到 Btree 的
 	// * leaf
 	// * meta
 	// * branch
-	flags    uint16
-
+	flags uint16
 	// count 是一个 u16, 所以有的地方最大只给了 0xFFFF
-	count    uint16
+	count uint16
 	// overflow page, 一个 id, 表示 [id, id + overflow] 是这个 page 的逻辑范围
 	overflow uint32
 	// 保存的实际内容
 	// 这个 ptr 实际上是 data 段
-	ptr      uintptr
+	ptr uintptr
 }
 
 // typ returns a human readable page type string used for debugging.

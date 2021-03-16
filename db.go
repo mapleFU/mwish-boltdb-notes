@@ -96,22 +96,22 @@ type DB struct {
 
 	/**
 	上面是配置，下面是一些内部状态
-	 */
+	*/
 
 	path     string
 	file     *os.File
 	lockfile *os.File // windows only
 
-	dataref  []byte   // mmap'ed readonly, write throws SEGV
+	dataref []byte // mmap'ed readonly, write throws SEGV
 
-	data     *[maxMapSize]byte
-	datasz   int
-	filesz   int // current on disk file size
+	data   *[maxMapSize]byte
+	datasz int
+	filesz int // current on disk file size
 
 	// meta page
 	// TODO(mwish): 为什么要有两个？
-	meta0    *meta
-	meta1    *meta
+	meta0 *meta
+	meta1 *meta
 
 	// 这个值应该是不可更改的，大小应该和 mmap 用到的 pageSize 是一样的
 	// 从 os.GetPageSize 拿到。
@@ -119,9 +119,9 @@ type DB struct {
 	pageSize int
 	opened   bool
 	// 正在运行的读写事务，同一时间只能有一个
-	rwtx     *Tx
+	rwtx *Tx
 	// 正在运行的读事务
-	txs      []*Tx
+	txs []*Tx
 
 	// 现有的 freelist
 	freelist *freelist
@@ -133,10 +133,10 @@ type DB struct {
 	batch   *batch
 
 	// 限制写入事务的数量
-	rwlock   sync.Mutex   // Allows only one writer at a time.
+	rwlock sync.Mutex // Allows only one writer at a time.
 	// 限制 metapage 读写的 lock
 	// TODO(mwish): 这个是什么和什么冲突的
-	metalock sync.Mutex   // Protects meta page access.
+	metalock sync.Mutex // Protects meta page access.
 	// TODO(mwish): 这个是什么时候需要的?
 	mmaplock sync.RWMutex // Protects mmap access during remapping.
 	// 读/写的事务都会触发 stat 的更新，所以需要 statlock
