@@ -10,9 +10,9 @@ import (
 // node represents an in-memory, deserialized page.
 type node struct {
 	// 自身存在的 bucket, 对于 branch 和 leaf 来说，共享同一个 bucket
-	bucket     *Bucket
+	bucket *Bucket
 	// 是否是 leaf page
-	isLeaf     bool
+	isLeaf bool
 	// 下面应该和 btree 的状态有关。
 	// unbalanced 和 rebalance 有关，暗示某个 leaf 可能过小，需要 balance
 	// spill 和某个过大有关，暗示需要 spill
@@ -21,16 +21,16 @@ type node struct {
 
 	// node 起始的 key
 	// NOTE: key 的内容引自 mmap, 是不可修改的
-	key        []byte
-	pgid       pgid
+	key  []byte
+	pgid pgid
 
-	parent     *node
+	parent *node
 	// 子节点
-	children   nodes
+	children nodes
 	// 存储 Page 中的 value
 	// inode 类型类似 tagged enum, 是一个 flag + [ leaf 的值 | branch 的值 ]
 	// NOTE: inode 的内容引自 mmap, 是不可修改的
-	inodes     inodes
+	inodes inodes
 }
 
 // 这都递归，你妈飞了？
@@ -176,7 +176,8 @@ func (n *node) del(key []byte) {
 		return
 	}
 
-	// TODO(mwish): 这个地方会缩容吗？
+	// Q: 这个地方会缩容吗？
+	// A: 设置了 unbalanced = true, 来让 balance 调整它
 	// Delete inode from the node.
 	n.inodes = append(n.inodes[:index], n.inodes[index+1:]...)
 
@@ -372,7 +373,6 @@ func (n *node) splitIndex(threshold int) (index, sz int) {
 
 	return
 }
-
 
 // spill writes the nodes to dirty pages and splits nodes as it goes.
 // Returns an error if dirty pages cannot be allocated.
@@ -645,9 +645,11 @@ func (n *node) dump() {
 
 type nodes []*node
 
-func (s nodes) Len() int           { return len(s) }
-func (s nodes) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
-func (s nodes) Less(i, j int) bool { return bytes.Compare(s[i].inodes[0].key, s[j].inodes[0].key) == -1 }
+func (s nodes) Len() int      { return len(s) }
+func (s nodes) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
+func (s nodes) Less(i, j int) bool {
+	return bytes.Compare(s[i].inodes[0].key, s[j].inodes[0].key) == -1
+}
 
 // inode represents an internal node inside of a node.
 // It can be used to point to elements in a page or point

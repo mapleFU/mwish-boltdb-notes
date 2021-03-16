@@ -37,17 +37,21 @@ type Bucket struct {
 	// bucket: <seq, page_id>
 	*bucket
 
-	tx       *Tx                // the associated transaction
+	/**
+	 * 下面是对应的内存结构
+	 */
+
+	tx *Tx // the associated transaction
 	// Note: 只有写事务才有 buckets cache
-	buckets  map[string]*Bucket // subbucket cache
+	buckets map[string]*Bucket // subbucket cache
 
 	// inline page
-	page     *page              // inline page reference
+	page *page // inline page reference
 	// root page 在内存中的缓存. 这个的 root 是 tree 的 root.
-	rootNode *node              // materialized node for the root page.
+	rootNode *node // materialized node for the root page.
 
 	// Note: 只有写事务才有 nodes cache
-	nodes    map[pgid]*node     // node cache
+	nodes map[pgid]*node // node cache
 
 	// Sets the threshold for filling nodes when they split. By default,
 	// the bucket will fill to 50% but it can be useful to increase this

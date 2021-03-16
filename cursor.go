@@ -19,7 +19,7 @@ type Cursor struct {
 	// 这个 bucket 应该是触发 .node 和 .pageNode 用的
 	bucket *Bucket
 	// 这个 stack 应该是一个从上到下的 stack
-	stack  []elemRef
+	stack []elemRef
 }
 
 // Bucket returns the bucket that this cursor was created from.
@@ -383,8 +383,8 @@ func (c *Cursor) node() *node {
 // elemRef represents a reference to an element on a given page/node.
 type elemRef struct {
 	// 下面这两个字段也是个 enum...感觉是靠 nullptr 判断的
-	page  *page
-	node  *node
+	page *page
+	node *node
 	// index 是给定的坐标，page/node
 	index int
 }
