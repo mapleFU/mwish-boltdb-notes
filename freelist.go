@@ -66,6 +66,8 @@ func (f *freelist) copyall(dst []pgid) {
 
 // allocate returns the starting page id of a contiguous list of pages of a given size.
 // If a contiguous block cannot be found then 0 is returned.
+//
+// freelist 写的很垃圾，采用了 first fit 算法，感觉可以改掉
 func (f *freelist) allocate(n int) pgid {
 	if len(f.ids) == 0 {
 		return 0

@@ -107,13 +107,23 @@ type DB struct {
 	data     *[maxMapSize]byte
 	datasz   int
 	filesz   int // current on disk file size
+
+	// meta page
+	// TODO(mwish): 为什么要有两个？
 	meta0    *meta
 	meta1    *meta
+
+	// 这个值应该是不可更改的，大小应该和 mmap 用到的 pageSize 是一样的
+	// 从 os.GetPageSize 拿到。
+	// 如果别的机器上配置的 page size 不一样，然后给另一个机器读，那么可能有不同的 pagesize?
 	pageSize int
 	opened   bool
 	// 正在运行的读写事务，同一时间只能有一个
 	rwtx     *Tx
+	// 正在运行的读事务
 	txs      []*Tx
+
+	// 现有的 freelist
 	freelist *freelist
 	stats    Stats
 
@@ -124,8 +134,14 @@ type DB struct {
 
 	// 限制写入事务的数量
 	rwlock   sync.Mutex   // Allows only one writer at a time.
+	// 限制 metapage 读写的 lock
+	// TODO(mwish): 这个是什么和什么冲突的
 	metalock sync.Mutex   // Protects meta page access.
+	// TODO(mwish): 这个是什么时候需要的?
 	mmaplock sync.RWMutex // Protects mmap access during remapping.
+	// 读/写的事务都会触发 stat 的更新，所以需要 statlock
+	// 同时, `Stats` 接口是个读语义，所以实现了读写锁
+	// （我比较好奇的是调 `Stats` 多不多）
 	statlock sync.RWMutex // Protects stats access.
 
 	ops struct {
@@ -380,6 +396,7 @@ func (db *DB) init() error {
 		m.version = version
 		m.pageSize = uint32(db.pageSize)
 		m.freelist = 2
+		// 创建一个 root bucket, root: 3 表示数据页从 3 开始
 		m.root = bucket{root: 3}
 		m.pgid = 4
 		m.txid = txid(i)
@@ -392,6 +409,7 @@ func (db *DB) init() error {
 	p.flags = freelistPageFlag
 	p.count = 0
 
+	// 数据页被初始化为一个 leaf page
 	// Write an empty leaf page at page 4.
 	p = db.pageInBuffer(buf[:], pgid(3))
 	p.id = pgid(3)
@@ -634,6 +652,8 @@ func (db *DB) Update(fn func(*Tx) error) error {
 // Any error that is returned from the function is returned from the View() method.
 //
 // Attempting to manually rollback within the function will cause a panic.
+//
+// 1. 读流程
 func (db *DB) View(fn func(*Tx) error) error {
 	t, err := db.Begin(false)
 	if err != nil {
@@ -852,6 +872,8 @@ func (db *DB) meta() *meta {
 }
 
 // allocate returns a contiguous block of memory starting at a given page.
+//
+// 申请连续的内存，如果 count == 1 从 page-pool 分配，否则从 heap 上分配
 func (db *DB) allocate(count int) (*page, error) {
 	// Allocate a temporary buffer for the page.
 	var buf []byte
@@ -863,6 +885,9 @@ func (db *DB) allocate(count int) (*page, error) {
 	p := (*page)(unsafe.Pointer(&buf[0]))
 	p.overflow = uint32(count - 1)
 
+	// freelist 存的并不是内存 page(node), 存的是可用的 node id
+	// 不过这个用的是 first fit 算法，也挺垃圾的
+	//
 	// Use pages from the freelist if they are available.
 	if p.id = db.freelist.allocate(count); p.id != 0 {
 		return p, nil
@@ -1005,6 +1030,7 @@ type meta struct {
 	flags    uint32
 	root     bucket
 	freelist pgid
+	// high watermark
 	pgid     pgid
 	txid     txid
 	checksum uint64

@@ -68,12 +68,15 @@ func (p *page) meta() *meta {
 	return (*meta)(unsafe.Pointer(&p.ptr))
 }
 
+// 总觉得如果是我写下面这些就得 check 一下 `typ`, 否则这个咋查啊
+
 // leafPageElement retrieves the leaf node by index
 func (p *page) leafPageElement(index uint16) *leafPageElement {
 	n := &((*[0x7FFFFFF]leafPageElement)(unsafe.Pointer(&p.ptr)))[index]
 	return n
 }
 
+// 返回一个最大的数组，把所有权交给用户
 // leafPageElements retrieves a list of leaf nodes.
 func (p *page) leafPageElements() []leafPageElement {
 	if p.count == 0 {
@@ -87,6 +90,7 @@ func (p *page) branchPageElement(index uint16) *branchPageElement {
 	return &((*[0x7FFFFFF]branchPageElement)(unsafe.Pointer(&p.ptr)))[index]
 }
 
+// TODO(mwish): 为什么 p.count == 0 就这样，有点没搞懂，是不会 mmap 映射吗？
 // branchPageElements retrieves a list of branch nodes.
 func (p *page) branchPageElements() []branchPageElement {
 	if p.count == 0 {
@@ -108,6 +112,7 @@ func (s pages) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 func (s pages) Less(i, j int) bool { return s[i].id < s[j].id }
 
 // branchPageElement represents a node on a branch page.
+// 这个似乎 key 是单独分开存的, 由 (pos, ksize) 定位。pgid 直接存了.
 type branchPageElement struct {
 	pos   uint32
 	ksize uint32
@@ -122,7 +127,10 @@ func (n *branchPageElement) key() []byte {
 
 // leafPageElement represents a node on a leaf page.
 type leafPageElement struct {
+	// flags 应该是存储内容的 flags, 比如 bucketLeafFlag
 	flags uint32
+	// 存储是 <key, value>
+	// 内容 pos -> (k, v)
 	pos   uint32
 	ksize uint32
 	vsize uint32
@@ -138,14 +146,6 @@ func (n *leafPageElement) key() []byte {
 func (n *leafPageElement) value() []byte {
 	buf := (*[maxAllocSize]byte)(unsafe.Pointer(n))
 	return (*[maxAllocSize]byte)(unsafe.Pointer(&buf[n.pos+n.ksize]))[:n.vsize:n.vsize]
-}
-
-// PageInfo represents human readable information about a page.
-type PageInfo struct {
-	ID            int
-	Type          string
-	Count         int
-	OverflowCount int
 }
 
 type pgids []pgid
@@ -168,6 +168,7 @@ func (a pgids) merge(b pgids) pgids {
 	return merged
 }
 
+// mergesort 里面 merge 阶段那种，因为两个 pgids
 // mergepgids copies the sorted union of a and b into dst.
 // If dst is too small, it panics.
 func mergepgids(dst, a, b pgids) {

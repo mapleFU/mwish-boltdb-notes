@@ -34,11 +34,19 @@ const DefaultFillPercent = 0.5
 
 // Bucket represents a collection of key/value pairs inside the database.
 type Bucket struct {
+	// bucket: <seq, page_id>
 	*bucket
+
 	tx       *Tx                // the associated transaction
+	// Note: 只有写事务才有 buckets cache
 	buckets  map[string]*Bucket // subbucket cache
+
+	// inline page
 	page     *page              // inline page reference
+	// root page 在内存中的缓存. 这个的 root 是 tree 的 root.
 	rootNode *node              // materialized node for the root page.
+
+	// Note: 只有写事务才有 nodes cache
 	nodes    map[pgid]*node     // node cache
 
 	// Sets the threshold for filling nodes when they split. By default,
@@ -52,7 +60,9 @@ type Bucket struct {
 // bucket represents the on-file representation of a bucket.
 // This is stored as the "value" of a bucket key. If the bucket is small enough,
 // then its root page can be stored inline in the "value", after the bucket
-// header. In the case of inline buckets, the "root" will be 0.
+// header.
+//
+// In the case of inline buckets, the "root" will be 0.
 type bucket struct {
 	root     pgid   // page id of the bucket's root-level page
 	sequence uint64 // monotonically incrementing, used by NextSequence()
@@ -101,12 +111,14 @@ func (b *Bucket) Cursor() *Cursor {
 // Returns nil if the bucket does not exist.
 // The bucket instance is only valid for the lifetime of the transaction.
 func (b *Bucket) Bucket(name []byte) *Bucket {
+	// 从 cache 里面找
 	if b.buckets != nil {
 		if child := b.buckets[string(name)]; child != nil {
 			return child
 		}
 	}
 
+	// 用 Cursor 找到对应的值
 	// Move cursor to key.
 	c := b.Cursor()
 	k, v, flags := c.seek(name)
@@ -130,6 +142,7 @@ func (b *Bucket) Bucket(name []byte) *Bucket {
 func (b *Bucket) openBucket(value []byte) *Bucket {
 	var child = newBucket(b.tx)
 
+	// TODO(mwish): 这个地方是什么意思，我看懂了 unaligned 要 copy, 不过没看懂这个
 	// If unaligned load/stores are broken on this arch and value is
 	// unaligned simply clone to an aligned byte array.
 	unaligned := brokenUnaligned && uintptr(unsafe.Pointer(&value[0]))&3 != 0
@@ -147,6 +160,7 @@ func (b *Bucket) openBucket(value []byte) *Bucket {
 		child.bucket = (*bucket)(unsafe.Pointer(&value[0]))
 	}
 
+	// inline 的话，后面全是 page 的内容
 	// Save a reference to the inline page if the bucket is inline.
 	if child.root == 0 {
 		child.page = (*page)(unsafe.Pointer(&value[bucketHeaderSize]))
@@ -306,6 +320,7 @@ func (b *Bucket) Put(key []byte, value []byte) error {
 
 	// Insert into node.
 	key = cloneBytes(key)
+	// 这个地方写入会被注册到 buckets.nodes 里
 	c.node().put(key, key, value, 0, 0)
 
 	return nil
@@ -522,6 +537,7 @@ func (b *Bucket) _forEachPageNode(pgid pgid, depth int, fn func(*page, *node, in
 	}
 }
 
+// 将大小超过 page size * FillPercent 的 node 分解为多个 node
 // spill writes all the nodes for this bucket to dirty pages.
 func (b *Bucket) spill() error {
 	// Spill all child buckets first.
@@ -639,6 +655,8 @@ func (b *Bucket) rebalance() {
 	}
 }
 
+// 根据 page_id 和 parent node 来创建内存 node. 然后注册到 Bucket.nodes 里
+// CHECK: 似乎只有写接口会调用这个
 // node creates a node from a page and associates it with a given parent.
 func (b *Bucket) node(pgid pgid, parent *node) *node {
 	_assert(b.nodes != nil, "nodes map expected")
@@ -702,6 +720,11 @@ func (b *Bucket) dereference() {
 
 // pageNode returns the in-memory node, if it exists.
 // Otherwise returns the underlying page.
+//
+// (感觉返回 *page 的话是不能写的?)
+// 1. 如果是 inline 就返回 rootnode.
+// 2. 否则从 Bucket.nodes 中查找
+// 3. 否则调用 Tx.page, 它会先从缓存找，再从 db 找。找 db 的时候，因为 page 是物理上顺序的，所以很快。这里从 mmap 上加载。
 func (b *Bucket) pageNode(id pgid) (*page, *node) {
 	// Inline buckets have a fake page embedded in their value so treat them
 	// differently. We'll return the rootNode (if available) or the fake page.
