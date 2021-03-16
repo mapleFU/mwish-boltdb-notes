@@ -134,10 +134,9 @@ type DB struct {
 
 	// 限制写入事务的数量
 	rwlock sync.Mutex // Allows only one writer at a time.
-	// 限制 metapage 读写的 lock
-	// TODO(mwish): 这个是什么和什么冲突的
+	// 限制 metapage 读写的 lock, 读、写都会给 tx.bucket 拷贝一份 meta, 所以需要 metalock
 	metalock sync.Mutex // Protects meta page access.
-	// TODO(mwish): 这个是什么时候需要的?
+	// 当 remap + dereference 的时候，需要 mmap lock
 	mmaplock sync.RWMutex // Protects mmap access during remapping.
 	// 读/写的事务都会触发 stat 的更新，所以需要 statlock
 	// 同时, `Stats` 接口是个读语义，所以实现了读写锁
@@ -586,6 +585,8 @@ func (db *DB) beginRWTx() (*Tx, error) {
 }
 
 // removeTx removes a transaction from the database.
+//
+// 这个是读事务的时候结束的时候调用的，写事务不会走它。
 func (db *DB) removeTx(tx *Tx) {
 	// Release the read lock on the mmap.
 	db.mmaplock.RUnlock()
