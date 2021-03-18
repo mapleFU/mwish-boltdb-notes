@@ -20,7 +20,7 @@ type node struct {
 	spilled    bool
 
 	// node 起始的 key
-	// NOTE: key 的内容引自 mmap, 是不可修改的
+	// NOTE: key 的内容可能引自 mmap, 是不可修改的
 	key  []byte
 	pgid pgid
 
@@ -385,7 +385,11 @@ func (n *node) splitIndex(threshold int) (index, sz int) {
 // spill writes the nodes to dirty pages and splits nodes as it goes.
 // Returns an error if dirty pages cannot be allocated.
 //
-//
+// 1. 先递归对所有 children 调用 spill
+// 2. split 自己， 按照 pageSize 和 percent 分成 n 个 page, 他们会共有一个 parent.
+// 3. 针对2的结果，有必要的话 free 掉旧 page，然后 allocate 新的 page id 写上去
+// 4. 如果分裂出来的新父节点需要 spill, 那就 spill 它，保证整个树操作完成
+// 5. **注意**: commit 的时候会 rebalance && spill, spill 之后，node 不再会被读，所以递归的时候，子 node 不需要维护关系。
 func (n *node) spill() error {
 	var tx = n.bucket.tx
 	if n.spilled {
@@ -466,6 +470,8 @@ func (n *node) spill() error {
 //
 // 上面的 ** below a threshold or if there are not enough keys ** 就是 rebalance 的条件
 // 过大的话就直接忽略了。
+//
+// 和 spill 不一样，这个地方调整之后，需要修改 child 的 parent. spill 则不需要。这个我感觉这个地方代码太不好了。
 func (n *node) rebalance() {
 	if !n.unbalanced {
 		return

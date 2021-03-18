@@ -118,9 +118,10 @@ type DB struct {
 	// 如果别的机器上配置的 page size 不一样，然后给另一个机器读，那么可能有不同的 pagesize?
 	pageSize int
 	opened   bool
-	// 正在运行的读写事务，同一时间只能有一个
+	// 正在运行的读写事务，同一时间只能有一个访问，rwlock 和 metalock 实际上都会保护它
 	rwtx *Tx
 	// 正在运行的读事务
+	// 由 metalock 保护
 	txs []*Tx
 
 	// 现有的 freelist
@@ -134,10 +135,9 @@ type DB struct {
 
 	// 限制写入事务的数量
 	rwlock sync.Mutex // Allows only one writer at a time.
-	// 限制 metapage 读写的 lock
-	// TODO(mwish): 这个是什么和什么冲突的
+	// 限制 metapage 读写的 lock, 读、写都会给 tx.bucket 拷贝一份 meta, 所以需要 metalock
 	metalock sync.Mutex // Protects meta page access.
-	// TODO(mwish): 这个是什么时候需要的?
+	// 当 remap + dereference 的时候，需要 mmap lock
 	mmaplock sync.RWMutex // Protects mmap access during remapping.
 	// 读/写的事务都会触发 stat 的更新，所以需要 statlock
 	// 同时, `Stats` 接口是个读语义，所以实现了读写锁
@@ -390,7 +390,8 @@ func (db *DB) init() error {
 		p.id = pgid(i)
 		p.flags = metaPageFlag
 
-		// TODO(mwish): 这个地方是怎么确定非 meta page 的大小是多少的？
+		// Q: 这个地方是怎么确定非 meta page 的大小是多少的？
+		// A: 感觉怎么都够，不如说 metapage 应该空间是过大的
 		// Initialize the meta page.
 		m := p.meta()
 		m.magic = magic
@@ -398,6 +399,8 @@ func (db *DB) init() error {
 		m.pageSize = uint32(db.pageSize)
 		m.freelist = 2
 		// 创建一个 root bucket, root: 3 表示数据页从 3 开始
+		// 这是一个 bucket 对象，实际上 root bucket 的 header 是记在 meta 上的
+		// 而且应该没有 inline 模式？hhh
 		m.root = bucket{root: 3}
 		m.pgid = 4
 		m.txid = txid(i)
@@ -507,6 +510,10 @@ func (db *DB) Begin(writable bool) (*Tx, error) {
 	return db.beginTx()
 }
 
+// 读事务
+// 1. 占用一把 RLock. 事务写的时候，如果 remap 要占用 WLock, 这个是写者优先的，所以不会有读者一直占。
+// 2. 复制 metadata, 这个时候会从 meta.root 复制出 header (这个 header 在 meta 上)
+// 3. 记录一些统计信息，用户可以用来读了。
 func (db *DB) beginTx() (*Tx, error) {
 	// Lock the meta pages while we initialize the transaction. We obtain
 	// the meta lock before the mmap lock because that's the order that the
@@ -526,10 +533,12 @@ func (db *DB) beginTx() (*Tx, error) {
 	}
 
 	// Create a transaction associated with the database.
+	// 这个地方没有设置 writable, 拷贝了 metas
 	t := &Tx{}
 	t.init(db)
 
 	// Keep track of transaction until it closes.
+	// 计入 txs 列表
 	db.txs = append(db.txs, t)
 	n := len(db.txs)
 
@@ -586,6 +595,8 @@ func (db *DB) beginRWTx() (*Tx, error) {
 }
 
 // removeTx removes a transaction from the database.
+//
+// 这个是读事务的时候结束的时候调用的，写事务不会走它。
 func (db *DB) removeTx(tx *Tx) {
 	// Release the read lock on the mmap.
 	db.mmaplock.RUnlock()
@@ -654,7 +665,9 @@ func (db *DB) Update(fn func(*Tx) error) error {
 //
 // Attempting to manually rollback within the function will cause a panic.
 //
-// 1. 读流程
+// 读流程
+// 1. db.Begin(false) 开起一个 non-writable 的 txn
+// 2.
 func (db *DB) View(fn func(*Tx) error) error {
 	t, err := db.Begin(false)
 	if err != nil {
