@@ -50,6 +50,7 @@ type Bucket struct {
 	// root page 在内存中的缓存. 这个的 root 是 tree 的 root.
 	rootNode *node // materialized node for the root page.
 
+	// 记录写过的 node
 	// Note: 只有写事务才有 nodes cache
 	nodes map[pgid]*node // node cache
 
@@ -541,6 +542,7 @@ func (b *Bucket) _forEachPageNode(pgid pgid, depth int, fn func(*page, *node, in
 	}
 }
 
+// 同时这里会首先吧
 // 将大小超过 page size * FillPercent 的 node 分解为多个 node
 // spill writes all the nodes for this bucket to dirty pages.
 func (b *Bucket) spill() error {
